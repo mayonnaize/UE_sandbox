@@ -1,0 +1,127 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../Schema.xsd" >
+	<!-- Example Usage: -->
+	<!-- RunUAT.bat BuildGraph -script="<ScriptPath>\BuildProject.xml" -target="Package Game Win64" -set:ProjectName=<ProjectName>-Set:ProjectDir="<FolderContainingUProjectFile>" -Set:BuildConfig=Development -Set:OutputDir="<MyBuildDir>" -->
+	<!-- Include script that handles engine builds -->
+	<Include Script="BuildEngine.xml"/>
+	<Include Script="ProjectVariables.xml"/>
+	<Property Name="Project" Value="$(ProjectDir)/$(ProjectName).uproject"/>
+	<!-- The argument to pass when building a project related program -->
+	<Property Name="ProjectArgument" Value="-Project=&quot;$(Project)&quot;"/>
+
+	<!--
+	=======================================================
+					Packaging Build Options
+	=======================================================
+	-->
+
+	<!-- The deployment output directory -->
+	<Option Name="OutputDir" DefaultValue="$(RootDir)/LocalBuilds" Description="The directory to store the output of a successful build"/>
+	<Option Name="Commandline" DefaultValue="" Description="Commandline arguments we want to be automatically applied to the build"/>
+	<!-- The argument we pass for levels when cooking -->
+	<Property Name="LevelArgument" Value=""/>
+	<Do If="'$(OverrideLevels)' != ''">
+		<Property Name="LevelArgument" Value="-Map=$(OverrideLevels)"/>
+	</Do>
+
+	<Option Name="Distribution" Restrict="True|False" DefaultValue="False" Description="Whether or not this build is for distribution"/>
+	<Property Name="DefaultCookerArguments" Value="$(DefaultCookerArguments) -distribution" If="'$(Distribution)' == 'true'"/>
+
+	<Option Name="CleanCook" Restrict="True|False" DefaultValue="False" Description="Do we to do a clean cook?"/>
+	<Property Name="DefaultCookerArguments" Value="$(DefaultCookerArguments) -iterativecooking" If="'$(CleanCook)' != 'true'"/>
+
+	<Option Name="CleanCompile" Restrict="True|False" DefaultValue="False" Description="Do we to do a clean build?"/>
+	<Property Name="BuildArguments" Value="$(BuildArguments) -clean" If="'$(CleanCompile)' == 'true'"/>
+
+	<!--
+	=======================================================
+					Compile Editor
+	=======================================================
+	-->
+	<!-- TODO エディタコンパイル無しでできるようにしたい -->
+
+	<Agent Name="Compile Game Editor" Type="Any">
+		<!-- Loop and declare nodes for each of our valid editor platforms -->
+		<ForEach Name="EditorPlatform" Values="Win64;Mac">
+			<!-- Compile the basic components required to compile a project -->
+			<Node Name="Compile $(ProjectName)Editor $(EditorPlatform)" Produces="#$(ProjectName)Editor$(EditorPlatform)">
+			<!-- <Node Name="Compile $(ProjectName)Editor $(EditorPlatform)" Requires="#UHT" Produces="#$(ProjectName)Editor$(EditorPlatform)"> -->
+				<Property Name="EditorBuildConfig" Value="$(BuildConfig)"/>
+				<!-- Be sure to adjust our Build Configs so we can't compile the editor in any form 'greater' then Development -->
+				<Do If="'$(BuildConfig)' == 'Test' OR '$(BuildConfig)' == 'Shipping'">
+					<Property Name="EditorBuildConfig" Value="Development"/>
+				</Do>
+				<Log Message="Compiling Editor in $(EditorBuildConfig) for $(EnginePlatform)"/>
+				<!-- Compile Editor for Project -->
+				<Compile Target="$(ProjectName)Editor" Platform="$(EditorPlatform)" Arguments="$(ProjectArgument) $(BuildArguments)" Configuration="$(EditorBuildConfig)" Tag="#ProjectEditorFiles_$(EditorPlatform)"/>
+			</Node>
+		</ForEach>
+	</Agent>
+
+	<!--
+	=======================================================
+			Windows Platform (Incl Xbox, PS4 etc)
+	=======================================================
+	-->
+
+	<!-- TODO パッケージのルートディレクトリにファイルを配置する -->
+	<Agent Name="Target Windows" Type="Windows">
+		<!-- Iterate over our Windows Targets -->
+		<ForEach Name="TargetPlatform" Values="$(SupportedWindowsPlatforms)">
+			<Property Name="PlatformCookArguments" Value=""/>
+			<!-- Compile Game for our Target Platform -->
+			<Node Name="Compile Game $(TargetPlatform)" Requires="#$(ProjectName)Editor$(HostPlatform)" Produces="#CompiledGame$(TargetPlatform)">
+				<Compile Target="$(ProjectName)" Platform="$(TargetPlatform)" Arguments="$(ProjectArgument) $(BuildArguments)" Configuration="$(BuildConfig)" Tag="#$(ProjectName)_$(TargetPlatform)Binaries"/>
+			</Node>
+			<!--
+				Package our Platforms
+			-->
+			<Node
+				Name="Build Game $(TargetPlatform)"
+				Requires="#$(ProjectName)Editor$(HostPlatform);#CompiledGame$(TargetPlatform);"
+				Produces="#Game$(TargetPlatform)">
+				<Command
+					Name="BuildCookRun"
+					Arguments="$(ProjectArgument)
+						-Platform=$(TargetPlatform)
+						-Config=$(BuildConfig)
+						-Cook
+						$(DefaultCookerArguments)
+						$(PlatformCookArguments)
+						$(LevelArgument)
+						-cmdline=&quot;$(Commandline)&quot;
+						-skipstage
+				"/>
+			</Node>
+			<Node
+				Name="Package Game $(TargetPlatform)"
+				Requires="#$(ProjectName)Editor$(HostPlatform);#CompiledGame$(TargetPlatform);#Game$(TargetPlatform);"
+				Produces="#Package$(TargetPlatform)">
+				<Command
+					Name="BuildCookRun"
+					Arguments="$(ProjectArgument)
+						-skipcook
+						-skippak
+						-package
+						-stage
+						-archive
+						-archivedirectory=&quot;$(OutputDir)&quot;
+						-addcmdline=hoge
+				"/>
+			</Node>
+		</ForEach>
+	</Agent>
+
+
+	<!--
+	=======================================================
+					Aggregates
+	=======================================================
+	-->
+	<Property Name="WindowsTargets" Value=""/>
+	<ForEach Name="WindowsPlatform" Values="$(SupportedWindowsPlatforms)">
+		<Property Name="WindowsTargets" Value="$(WindowsTargets);#Game$(WindowsPlatform)"/>
+	</ForEach>
+	<Aggregate Name="Package Windows Targets" Requires="$(WindowsTargets)"/>
+
+</BuildGraph>
